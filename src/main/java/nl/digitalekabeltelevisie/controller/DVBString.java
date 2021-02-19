@@ -2,7 +2,7 @@
  *
  *  http://www.digitalekabeltelevisie.nl/dvb_inspector
  *
- *  This code is Copyright 2009-2020 by Eric Berendsen (e_berendsen@digitalekabeltelevisie.nl)
+ *  This code is Copyright 2009-2021 by Eric Berendsen (e_berendsen@digitalekabeltelevisie.nl)
  *
  *  This file is part of DVB Inspector.
  *
@@ -29,11 +29,13 @@ package nl.digitalekabeltelevisie.controller;
 import static java.lang.Byte.toUnsignedInt;
 import static nl.digitalekabeltelevisie.util.Utils.MASK_8BITS;
 import static nl.digitalekabeltelevisie.util.Utils.getEscapedHTML;
+import static nl.digitalekabeltelevisie.util.Utils.getCharDecodedStringWithControls;
 import static nl.digitalekabeltelevisie.util.Utils.getInt;
 import static nl.digitalekabeltelevisie.util.Utils.getString;
 
 import java.nio.charset.Charset;
 import java.util.ArrayList;
+import java.util.Arrays;
 
 import nl.digitalekabeltelevisie.util.Utils;
 
@@ -62,7 +64,26 @@ public class DVBString {
 		this.offset = offset;
 	}
 
-
+	/**
+	 * Create a DVBString where the length is explicitly specified. Most of the usage first byte of data array islength, 
+	 * but sometimes (at end of descriptor) this is not needed because it can be infered differently. 
+	 * In those cases use this constructor
+	 * 
+	 * @param dataIn
+	 * @param offset
+	 * @param len
+	 */
+	public DVBString(final byte[] dataIn, final int offset, int len) {
+		super();
+		if(len>255) {
+			throw new RuntimeException("DVB String can not be longer than 255 chars:" + len); 
+		}
+		
+		this.data = new byte[len+1];
+		this.data[0] = (byte) len;
+		this.offset = 0;
+		System.arraycopy(dataIn, offset, this.data, 1, len);
+	}
 	/**
 	 * @return HTML representation of this string, including linefeeds  (0x8A) and emphasis (0x86/0x87). Line length not limited
 	 *
@@ -76,14 +97,24 @@ public class DVBString {
 	 * @return HTML representation of this string, including linefeeds  (0x8A) and emphasis (0x86/0x87). Line length max
 	 */
 	public String toEscapedHTML(final int maxWidth){
-		ArrayList<DVBString> array = new ArrayList<DVBString>();
-		array.add(this);
+		ArrayList<DVBString> array = new ArrayList<>(Arrays.asList(this));
 		return getEscapedHTML(array, maxWidth);
 	}
 
+	/**
+	 * return plain text string representation where control chars have been removed
+	 */
 	@Override
 	public String toString(){
 		return getString(data,this.getOffset()+1, this.getLength());
+	}
+	
+	
+	/**
+	 * @return tring representation where control chars are present
+	 */
+	public String toRawString() {
+		return getCharDecodedStringWithControls(data,this.getOffset()+1, this.getLength());
 	}
 	
 	/**
@@ -141,9 +172,8 @@ public class DVBString {
 				if(data[offset+2]==0x0){
 					return "ISO/IEC 8859-"+data[offset+3];
 
-				}else{
-					return "Illegal value";
 				}
+				return "Illegal value";
 			case 0x11:
 				return "ISO/IEC 10646-1";
 			case 0x12:

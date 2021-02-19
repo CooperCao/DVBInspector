@@ -2,7 +2,7 @@
  *
  *  http://www.digitalekabeltelevisie.nl/dvb_inspector
  *
- *  This code is Copyright 2009-2020 by Eric Berendsen (e_berendsen@digitalekabeltelevisie.nl)
+ *  This code is Copyright 2009-2021 by Eric Berendsen (e_berendsen@digitalekabeltelevisie.nl)
  *
  *  This file is part of DVB Inspector.
  *
@@ -40,6 +40,7 @@ import javax.swing.tree.DefaultMutableTreeNode;
 
 import nl.digitalekabeltelevisie.controller.*;
 import nl.digitalekabeltelevisie.data.mpeg.descriptors.*;
+import nl.digitalekabeltelevisie.data.mpeg.descriptors.extension.dvb.AC4Descriptor;
 import nl.digitalekabeltelevisie.data.mpeg.descriptors.extension.dvb.T2MIDescriptor;
 import nl.digitalekabeltelevisie.data.mpeg.descriptors.extension.dvb.TtmlSubtitlingDescriptor;
 import nl.digitalekabeltelevisie.data.mpeg.pes.GeneralPidHandler;
@@ -47,6 +48,7 @@ import nl.digitalekabeltelevisie.data.mpeg.pes.GeneralPesHandler;
 import nl.digitalekabeltelevisie.data.mpeg.pes.ac3.*;
 import nl.digitalekabeltelevisie.data.mpeg.pes.audio.Audio138183Handler;
 import nl.digitalekabeltelevisie.data.mpeg.pes.audio.aac.Audio144963Handler;
+import nl.digitalekabeltelevisie.data.mpeg.pes.audio.ac4.AC4Handler;
 import nl.digitalekabeltelevisie.data.mpeg.pes.dvbsubtitling.DVBSubtitleHandler;
 import nl.digitalekabeltelevisie.data.mpeg.pes.ebu.EBUTeletextHandler;
 import nl.digitalekabeltelevisie.data.mpeg.pes.ttml.TtmlPesHandler;
@@ -56,6 +58,9 @@ import nl.digitalekabeltelevisie.data.mpeg.pes.video265.H265Handler;
 import nl.digitalekabeltelevisie.data.mpeg.pid.t2mi.T2miPidHandler;
 import nl.digitalekabeltelevisie.data.mpeg.psi.*;
 import nl.digitalekabeltelevisie.data.mpeg.psi.PMTsection.Component;
+import nl.digitalekabeltelevisie.data.mpeg.psi.nonstandard.M7Fastscan;
+import nl.digitalekabeltelevisie.data.mpeg.psi.nonstandard.ONTSection;
+import nl.digitalekabeltelevisie.data.mpeg.psi.nonstandard.OperatorFastscan;
 import nl.digitalekabeltelevisie.gui.exception.NotAnMPEGFileException;
 import nl.digitalekabeltelevisie.util.*;
 import nl.digitalekabeltelevisie.util.tablemodel.*;
@@ -76,7 +81,8 @@ public class TransportStream implements TreeNode{
 		AIT("Application Information Table (AIT)"), 
 		RCT("Related Content Table (RCT)"), 
 		T2MI("T2-MI"),
-		TTML("TTML subtitling");
+		TTML("TTML subtitling"),
+		AC4("Dolby AC-4 Audio");
 		
 		private String description;
 		
@@ -249,47 +255,48 @@ public class TransportStream implements TreeNode{
 	 * @throws IOException
 	 */
 	public void parsePSITables(final java.awt.Component component) throws IOException {
-		final PositionPushbackInputStream fileStream = getInputStream(component);
-		final byte [] buf = new byte[packetLength];
-		int count=0;
-		no_packets = 0;
+		try (PositionPushbackInputStream fileStream = getInputStream(component)) {
+			final byte[] buf = new byte[packetLength];
+			int count = 0;
+			no_packets = 0;
 
-		pids = new PID [8192];
-		psi = new PSI();
-		error_packets = 0;
-		bitRate = -1;
-		bitRateTDT = -1;
+			pids = new PID[8192];
+			psi = new PSI();
+			error_packets = 0;
+			bitRate = -1;
+			bitRateTDT = -1;
 
-		int bytes_read =0;
-		int lastHandledSyncErrorPacket = -1;
-		do {
-			final long offset = fileStream.getPosition();
-			bytes_read = fileStream.read(buf, 0, packetLength);
-			final int next = fileStream.read();
-			if((bytes_read==packetLength)&&
-					(buf[0]==MPEGConstants.sync_byte) &&
-					((next==-1)||(next==MPEGConstants.sync_byte))) {
-				//always push back first byte of next packet
-				if((next!=-1)) {
-					fileStream.unread(next);
-				}
-				offsetHelper.addPacket(no_packets,offset);
-				processPacket(new TSPacket(buf, count,this));
-				count++;
-			}else{ // something wrong, find next syncbyte. First push back the lot
-				if((next!=-1)) {
-					if(lastHandledSyncErrorPacket != no_packets){
-						sync_errors++;
-						logger.severe("Did not find sync byte, resyncing at offset:"+offset+", packet_no:"+no_packets);
-						lastHandledSyncErrorPacket = no_packets;
+			int bytes_read = 0;
+			int lastHandledSyncErrorPacket = -1;
+			do {
+				final long offset = fileStream.getPosition();
+				bytes_read = fileStream.read(buf, 0, packetLength);
+				final int next = fileStream.read();
+				if ((bytes_read == packetLength) && (buf[0] == MPEGConstants.sync_byte)
+						&& ((next == -1) || (next == MPEGConstants.sync_byte))) {
+					// always push back first byte of next packet
+					if ((next != -1)) {
+						fileStream.unread(next);
 					}
-					fileStream.unread(next);
-					fileStream.unread(buf, 0, bytes_read);
-					// now read 1 byte and restart all
-					fileStream.read(); //ignore result
+					offsetHelper.addPacket(no_packets, offset);
+					processPacket(new TSPacket(buf, count, this));
+					count++;
+				} else { // something wrong, find next syncbyte. First push back the lot
+					if ((next != -1)) {
+						if (lastHandledSyncErrorPacket != no_packets) {
+							sync_errors++;
+							logger.severe("Did not find sync byte, resyncing at offset:" + offset + ", packet_no:"
+									+ no_packets);
+							lastHandledSyncErrorPacket = no_packets;
+						}
+						fileStream.unread(next);
+						fileStream.unread(buf, 0, bytes_read);
+						// now read 1 byte and restart all
+						fileStream.read(); // ignore result
+					}
 				}
-			}
-		} while (bytes_read==packetLength);
+			} while (bytes_read == packetLength);
+		}
 		namePIDs();
 		calculateBitRate();
 	}
@@ -567,20 +574,72 @@ public class TransportStream implements TreeNode{
 				pmtSection =(PMTsection)pmtSection.getNextVersion();
 			}
 		}
+		
+		// Tables like AIT, DSM-CC, UNT, INT< etc, are all referenced from at least one PMT, so have been given a label
+		// ALL??  no, there is an exception;
+		if(PreferencesManager.isEnableM7Fastscan()) {
+			labelM7FastscanTables();
+		}
 	}
 
-	public void labelPmtForProgram(PMTsection pmtSection, String service_name) {
+	/**
+	 * 
+	 */
+	private void labelM7FastscanTables() {
+		
+		M7Fastscan fastScan = getPsi().getM7fastscan();
+		labelM7FastscanONT(fastScan);
+		labelM7FastscanFstFnt(fastScan);
+	}
+
+	private void labelM7FastscanFstFnt(M7Fastscan fastScan) {
+		Map<Integer, Map<Integer, OperatorFastscan>> operators = fastScan.getOperators();
+		for (Integer operatorId : new TreeSet<>(operators.keySet())) {
+			Map<Integer, OperatorFastscan> operatorsInPid = operators.get(operatorId);
+			for (Integer pid : new TreeSet<>(operatorsInPid.keySet())) {
+				String name = "M7 FastScan operator "+fastScan.getOperatorName(operatorId);
+				
+				OperatorFastscan operatorFastscan = operatorsInPid.get(pid);
+				if(operatorFastscan.getOperatorSubListName()!=null) {
+					name += " " + operatorFastscan.getOperatorSubListName();
+				}
+				if(operatorFastscan.getFntSections() != null){
+					name += " FNT";
+				}
+				if(operatorFastscan.getFstSections() != null){
+					name += " FST";
+				}
+				if(pids[pid]!=null){
+					pids[pid].getLabelMaker().setBase(name);
+				}
+			}
+		}
+	}
+
+	private static void labelM7FastscanONT(M7Fastscan fastScan) {
+		ONTSection[] sections = fastScan.getOntSections();
+		if((sections != null) && (sections.length >0)) {
+			for(ONTSection section:sections) {
+				if(section != null) {
+					section.getParentPID().getLabelMaker().setBase("M7 FastScan ONT");
+					return;
+				}
+			}
+		}
+	}
+
+	private void labelPmtForProgram(PMTsection pmtSection, String service_name) {
 		addLabelMakerComponent(pmtSection.getParentPID().getPid(),"PMT",service_name);
 	}
 
-	public void labelEcmForProgram(PMTsection pmtSection, String service_name) {
+	private void labelEcmForProgram(PMTsection pmtSection, String service_name) {
 		for(CADescriptor caDescriptor:findGenericDescriptorsInList(pmtSection.getDescriptorList(), CADescriptor.class)){
 			addLabelMakerComponent(caDescriptor.getCaPID(), "ECM", "CA_ID:"+ caDescriptor.getCaSystemID()+ " ("+service_name+")");
 
 		}
 	}
 
-	public void labelPcrForProgram(PMTsection pmtSection, String service_name) {
+	private void labelPcrForProgram(PMTsection pmtSection, String service_name) {
 		final int PCR_pid = pmtSection.getPcrPid();
 		boolean pcrInComponent = false;
 		for(Component component:pmtSection.getComponentenList()) {
@@ -594,7 +653,7 @@ public class TransportStream implements TreeNode{
 
 	}
 
-	public void labelComponentsForProgram(PMTsection pmtSection, String service_name) {
+	private void labelComponentsForProgram(PMTsection pmtSection, String service_name) {
 		for(Component component:pmtSection.getComponentenList()) {
 			final int streamType = component.getStreamtype();
 			GeneralPidHandler generalPidHandler = determinePesHandlerByStreamType(component,streamType);
@@ -619,6 +678,9 @@ public class TransportStream implements TreeNode{
 					break;
 				case AC3:
 					generalPidHandler = new AC3Handler();
+					break;
+				case AC4:
+					generalPidHandler = new AC4Handler();
 					break;
 				case E_AC3:
 					generalPidHandler = new EAC3Handler();
@@ -671,6 +733,8 @@ public class TransportStream implements TreeNode{
 				return ComponentType.VBI;
 			}else if(d instanceof AC3Descriptor){
 				return ComponentType.AC3;
+			}else if(d instanceof AC4Descriptor){
+				return ComponentType.AC4;
 			}else if(d instanceof RegistrationDescriptor){
 				byte[] formatIdentifier = ((RegistrationDescriptor)d).getFormatIdentifier();
 				if(Utils.equals(formatIdentifier, 0, formatIdentifier.length,RegistrationDescriptor.AC_3,0,RegistrationDescriptor.AC_3.length)){
@@ -964,51 +1028,6 @@ public class TransportStream implements TreeNode{
 	}
 
 
-	public Iterator<TSPacket> getTSPacketsIterator(final int pid, final int flags){
-		return  getTSPacketsIterator(pid, flags, 0, getNo_packets());
-	}
-
-	public Iterator<TSPacket> getTSPacketsIterator(final int pid, final int flags, final int start, final int end){
-
-		final Iterator<TSPacket> iter = new Iterator<TSPacket>(){
-
-			int pos = findNext(start-1);
-
-			private int findNext(final int pos){
-				int p = pos+1;
-				while((p<end)&&(!match(p))){
-					p++;
-				}
-				return p;
-
-			}
-
-			private boolean match(final int p) {
-				return (packet_pid[p]&(0x1fff | flags))==( pid | flags) ;
-			}
-
-			@Override
-			public boolean hasNext() {
-				return pos<end;
-			}
-
-			@Override
-			public TSPacket next() {
-				final TSPacket packet = getTSPacket(pos);
-				pos = findNext(pos);
-				return packet;
-			}
-
-			@Override
-			public void remove() {
-				throw new UnsupportedOperationException();
-			}
-
-		};
-		return iter;
-
-	}
-
 	public PID getPID(final int p){
 		return pids[p];
 	}
@@ -1035,6 +1054,38 @@ public class TransportStream implements TreeNode{
 
 	public void setError_packets(int error_packets) {
 		this.error_packets = error_packets;
+	}
+
+	/**
+	 * @return
+	 */
+	List<LinkageDescriptor> getLinkageDescriptorsFromNitNetworkLoop() {
+		final NIT nit = getPsi().getNit();
+		final int actualNetworkID = nit.getActualNetworkID();
+		final List<Descriptor> descriptors = nit.getNetworkDescriptors(actualNetworkID);
+		final List<LinkageDescriptor> linkageDescriptors = Descriptor.findGenericDescriptorsInList(descriptors, LinkageDescriptor.class);
+		return linkageDescriptors;
+	}
+
+	public boolean isONTSection(int pid) {
+		final NIT nit = getPsi().getNit();
+		final int actualNetworkID = nit.getActualNetworkID();
+		final List<LinkageDescriptor> linkageDescriptors = getLinkageDescriptorsFromNitNetworkLoop();
+	
+		int streamID = getStreamID();
+	
+		final int originalNetworkID = nit.getOriginalNetworkID(actualNetworkID, streamID);
+	
+		for (final LinkageDescriptor ld : linkageDescriptors) {
+			if (ld.getLinkageType() == 0x8D 
+					&& ld.getTransportStreamId() == streamID
+					&& ld.getOriginalNetworkId() == originalNetworkID 
+					&& ld.getServiceId() == pid
+					&& M7Fastscan.isValidM7Code(ld.getM7_code())) {
+				return true;
+			}
+		}
+		return false;
 	}
 	
 }
