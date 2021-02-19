@@ -10,6 +10,6 @@
         "**/target": true,
         "**/test": true,
         "**/doc": true,
-        "**/resources": true,
+        "**/resources": false,
     }
 }
