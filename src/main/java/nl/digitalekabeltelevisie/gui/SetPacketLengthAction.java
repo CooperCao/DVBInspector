@@ -27,37 +27,25 @@
 
 package nl.digitalekabeltelevisie.gui;
 
-import java.awt.Toolkit;
-import java.awt.datatransfer.Clipboard;
 import java.awt.event.ActionEvent;
 
-import javax.swing.AbstractAction;
+import nl.digitalekabeltelevisie.main.DVBinspector;
+import nl.digitalekabeltelevisie.util.PreferencesManager;
 
-/**
- * @author Eric
- *
- */
-public class TableCopyAction extends AbstractAction {
-	
-	final TablePanel tablePanel;
-
+public class SetPacketLengthAction extends AbstractSetPreferenceAction {
 	/**
-	 * @param tablePanel
-	 * @param string
+	 *
 	 */
-	public TableCopyAction(TablePanel tablePanel, String label) {
-		super(label);
-		this.tablePanel = tablePanel;
-	}
 
-	@Override
-	public void actionPerformed(ActionEvent e) {
+	private int length=0;
 
-        TextHTMLTransferable transferable = new TextHTMLTransferable(tablePanel.getTableAsText(), tablePanel.getTableAsHtml());
+    public SetPacketLengthAction(final DVBinspector controller, final int length) {
+	super(controller);
+	this.length = length;
+    }
 
-		final Clipboard clipboard = Toolkit.getDefaultToolkit().getSystemClipboard();
-		clipboard.setContents(transferable, null);
-        
-	}
-
+    public void actionPerformed(final ActionEvent e) {
+	PreferencesManager.setPacketLengthModus(length);
+	askReloadStream();
+    }
 }

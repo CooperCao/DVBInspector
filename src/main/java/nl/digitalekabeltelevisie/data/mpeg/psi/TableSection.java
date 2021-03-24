@@ -218,7 +218,7 @@ public class TableSection implements TreeNode{
 		case 0x3C: return "DSM-CC - Download Data Messages (DDB)";
 		case 0x3D: return "DSM-CC - stream descriptorlist";
 		case 0x3E: return "DSM-CC sections with private data // DVB datagram (ISO/IEC 13818-6)";
-		case 0x3F: return "ISO/IEC 13818-6 reserved";
+		case 0x3F: return "DSM-CC - Addressable Sections"; // 13818-6:1998/Amd.1:2000
 
 		case 0x40: return "network_information_section - actual_network";
 		case 0x41: return "network_information_section - other_network";
@@ -441,8 +441,7 @@ public class TableSection implements TreeNode{
 		if((bitrate>0)&&(count>=2)){
 			final float repRate=((float)(last-first)*parentTransportStream.getPacketLenghth()*8)/((count-1)*bitrate);
 			try (Formatter formatter = new Formatter()){
-				String r = "repetition rate: "+formatter.format("%3.3f seconds",repRate);
-				return r;
+				return "repetition rate: "+formatter.format("%3.3f seconds",repRate);
 			}
 		}
 		return null;
@@ -454,8 +453,7 @@ public class TableSection implements TreeNode{
 		if(bitrate>0){
 			final float repRate=((float)(last)*parentTransportStream.getPacketLenghth()*8)/(bitrate);
 			try (Formatter formatter = new Formatter()){
-				String r = "interval: "+formatter.format("%3.3f seconds",repRate);
-				return r;
+				return "interval: "+formatter.format("%3.3f seconds",repRate);
 			}
 		}
 		return null;
@@ -517,7 +515,7 @@ public class TableSection implements TreeNode{
 		this.nextVersion = next;
 	}
 
-	public long getFirst_packet_no() {
+	public int getFirst_packet_no() {
 		return firstPacketNo;
 	}
 
@@ -575,13 +573,9 @@ public class TableSection implements TreeNode{
 		}
 		final TableSection other = (TableSection) obj;
 		if (raw_data == null) {
-			if (other.raw_data != null) {
-				return false;
-			}
-		} else if (!raw_data.equals(other.raw_data)) {
-			return false;
+			return other.raw_data == null;
 		}
-		return true;
+		return raw_data.equals(other.raw_data);
 	}
 
 	public int getMinPacketDistance() {

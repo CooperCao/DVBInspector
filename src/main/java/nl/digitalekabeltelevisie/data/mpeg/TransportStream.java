@@ -58,6 +58,7 @@ import nl.digitalekabeltelevisie.data.mpeg.pes.video265.H265Handler;
 import nl.digitalekabeltelevisie.data.mpeg.pid.t2mi.T2miPidHandler;
 import nl.digitalekabeltelevisie.data.mpeg.psi.*;
 import nl.digitalekabeltelevisie.data.mpeg.psi.PMTsection.Component;
+import nl.digitalekabeltelevisie.data.mpeg.psi.handler.GeneralPsiTableHandler;
 import nl.digitalekabeltelevisie.data.mpeg.psi.nonstandard.M7Fastscan;
 import nl.digitalekabeltelevisie.data.mpeg.psi.nonstandard.ONTSection;
 import nl.digitalekabeltelevisie.data.mpeg.psi.nonstandard.OperatorFastscan;
@@ -84,7 +85,7 @@ public class TransportStream implements TreeNode{
 		TTML("TTML subtitling"),
 		AC4("Dolby AC-4 Audio");
 		
-		private String description;
+		private final String description;
 		
 		ComponentType(String description){
 			this.description = description;
@@ -157,12 +158,10 @@ public class TransportStream implements TreeNode{
 	 */
 	private int sync_errors = 0;
 
-	private final int max_packets;
-
 	private int packetLength = 188;
 
-	private static final int [] ALLOWED_PACKET_LENGTHS = {188,192,204,208};
-
+	public static final int [] ALLOWED_PACKET_LENGTHS = {188,192,204,208};
+	
 
 	/**
 	 *
@@ -182,11 +181,19 @@ public class TransportStream implements TreeNode{
 	public TransportStream(final File file) throws NotAnMPEGFileException,IOException{
 		this.file = file;
 		len = file.length();
-		packetLength = determineActualPacketLength(file);
-		max_packets = (int)(len / packetLength);
+		packetLength = determinePacketLengthToUse(file);
+		int max_packets = (int) (len / packetLength);
 		packet_pid = new short [max_packets];
 		offsetHelper = new OffsetHelper(max_packets,packetLength);
 
+	}
+	
+	private static int determinePacketLengthToUse(final File file) throws NotAnMPEGFileException, IOException {
+		int packetLengthModus = PreferencesManager.getPacketLengthModus();
+		if(packetLengthModus == 0) { // auto
+			return determineActualPacketLength(file);
+		}
+		return packetLengthModus;
 	}
 
 	/**
@@ -195,6 +202,10 @@ public class TransportStream implements TreeNode{
 	 * @return
 	 */
 	private static int determineActualPacketLength(final File file) throws NotAnMPEGFileException,IOException{
+		if(file.length()< 752) {
+			throw new NotAnMPEGFileException("File too short to determine packet length automatic. File should have at least 5 consecutive packets.\n\n"
+					+ "Try setting packet length manual.");
+		}
 		try(final RandomAccessFile randomAccessFile = new RandomAccessFile(file, "r")){
 			for(final int possiblePacketLength:ALLOWED_PACKET_LENGTHS){
 				logger.log(Level.INFO, "Trying for packetLength {0}",possiblePacketLength);
@@ -206,7 +217,9 @@ public class TransportStream implements TreeNode{
 				}
 			}
 		}
-		throw new NotAnMPEGFileException();
+		throw new NotAnMPEGFileException("DVB Inspector could not determine packetsize for this file. \n" +
+				"DVB Inspector supports packet sizes of 188, 192, 204 and 208 bytes.\n\n " +
+		"Are you sure this file contains a valid MPEG Transport Stream?\n\n ");
 	}
 
 	/**
@@ -360,10 +373,10 @@ public class TransportStream implements TreeNode{
 		final InputStream is = new FileInputStream(file);
 		final long expectedSize=file.length();
 		if(component==null){
-			return new PositionPushbackInputStream(new BufferedInputStream(is),200);
+			return new PositionPushbackInputStream(new BufferedInputStream(is),300);
 		}
 		return new PositionPushbackInputStream(new BufferedInputStream(new ProgressMonitorLargeInputStream(component,
-				"Reading file \"" + file.getPath() +"\"",is, expectedSize)),200);
+				"Reading file \"" + file.getPath() +"\"",is, expectedSize)),300);
 	}
 
 
@@ -376,7 +389,7 @@ public class TransportStream implements TreeNode{
 			final PID pid = pids[i];
 			if(pid!=null)
 			{
-				buf.append("  PID :").append(i).append(", ").append(pid.toString()).append(" packets, ").append((pid.getPackets()*100)/no_packets).append("%, duplicate packets:"+pid.getDup_packets()+"\n");
+				buf.append("  PID :").append(i).append(", ").append(pid.toString()).append(" packets, ").append((pid.getPackets() * 100) / no_packets).append("%, duplicate packets:").append(pid.getDup_packets()).append("\n");
 			}
 		}
 
@@ -415,7 +428,7 @@ public class TransportStream implements TreeNode{
 		t.add(new DefaultMutableTreeNode(new KVP("size",file.length(),null)));
 		t.add(new DefaultMutableTreeNode(new KVP("modified",new Date(file.lastModified()).toString(),null)));
 		t.add(new DefaultMutableTreeNode(new KVP("TS packets",no_packets,null)));
-		t.add(new DefaultMutableTreeNode(new KVP("packet size",packetLength,null)));
+		t.add(new DefaultMutableTreeNode(new KVP("packet size",packetLength,PreferencesManager.getPacketLengthModus()==0?"(detected)":"(forced)")));
 		t.add(new DefaultMutableTreeNode(new KVP("Error packets",error_packets,null)));
 		t.add(new DefaultMutableTreeNode(new KVP("Sync Errors",sync_errors,null)));
 		if(bitRate!=-1){
@@ -430,7 +443,7 @@ public class TransportStream implements TreeNode{
 		t.add(psi.getJTreeNode(modus));
 		if(!psiOnlyModus(modus)){
 			KVP kvp = new KVP("PIDs");
-			kvp.setTableSource(() -> getTableModel());
+			kvp.setTableSource(this::getTableModel);
 			final DefaultMutableTreeNode pidTreeNode = new DefaultMutableTreeNode(kvp);
 			t.add(pidTreeNode);
 			for (final PID pid : pids) {
@@ -439,11 +452,13 @@ public class TransportStream implements TreeNode{
 				}
 
 			}
-		}
-
-		if(!psiOnlyModus(modus)){
-			final JTreeLazyList list = new JTreeLazyList(new TSPacketGetter(this,modus));
-			t.add(list.getJTreeNode(modus, "Transport packets "));
+			// TSPackets
+			if(getNo_packets()!=0) {
+				final JTreeLazyList list = new JTreeLazyList(new TSPacketGetter(this,modus));
+				t.add(list.getJTreeNode(modus, "Transport packets "));
+			}else {
+				t.add(new DefaultMutableTreeNode(new KVP("Transport packets ")));
+			}
 		}
 
 		return t;
@@ -452,16 +467,15 @@ public class TransportStream implements TreeNode{
 	
 	static TableHeader<TransportStream,PID> buildPidTableHeader() {
 
-		TableHeader<TransportStream,PID> tableHeader =  new TableHeaderBuilder<TransportStream,PID>().
-				addOptionalRowColumn("pid", p ->p.getPid(), Integer.class).
+		return new TableHeaderBuilder<TransportStream,PID>().
+				addOptionalRowColumn("pid", PID::getPid, Integer.class).
 				addOptionalRowColumn("label", p->p.getLabelMaker().toString(), String.class).
-				addOptionalRowColumn("pid type", p->p.getTypeString(), String.class).
-				addOptionalRowColumn("packets", p->p.getPackets(), Integer.class).
-				addOptionalRowColumn("duplicate packets", p->p.getDup_packets(), Integer.class).
-				addOptionalRowColumn("continuity errors", p->p.getContinuity_errors(), Integer.class).
-				addOptionalRowColumn("scrambled", p->p.isScrambled(), Boolean.class).
+				addOptionalRowColumn("pid type", PID::getTypeString, String.class).
+				addOptionalRowColumn("packets", PID::getPackets, Integer.class).
+				addOptionalRowColumn("duplicate packets", PID::getDup_packets, Integer.class).
+				addOptionalRowColumn("continuity errors", PID::getContinuity_errors, Integer.class).
+				addOptionalRowColumn("scrambled", PID::isScrambled, Boolean.class).
 				build();
-		return tableHeader;
 	}
 		
 
@@ -580,6 +594,24 @@ public class TransportStream implements TreeNode{
 		if(PreferencesManager.isEnableM7Fastscan()) {
 			labelM7FastscanTables();
 		}
+		
+		if(PreferencesManager.isEnableGenericPSI()) {
+			for (final PID pid : pids) {
+				if((pid!=null)&&(pid.getType()==PID.PSI)) {
+						final GeneralPSITable psiData = pid.getPsi();
+						if((!psiData.getData().isEmpty())|| 
+								(!psiData.getSimpleSectionsd().isEmpty())) {
+							if(pid.getPidHandler()==null) {
+								GeneralPsiTableHandler generalPsiTableHandler = new GeneralPsiTableHandler();
+								generalPsiTableHandler.setPID(pid);
+								generalPsiTableHandler.setTransportStream(this);
+								pid.setPidHandler(generalPsiTableHandler);
+							}
+						}
+					}
+				}
+			}
+
 	}
 
 	/**
@@ -643,8 +675,9 @@ public class TransportStream implements TreeNode{
 		final int PCR_pid = pmtSection.getPcrPid();
 		boolean pcrInComponent = false;
 		for(Component component:pmtSection.getComponentenList()) {
-			if(PCR_pid == component.getElementaryPID()) {
+			if (PCR_pid == component.getElementaryPID()) {
 				pcrInComponent = true;
+				break;
 			}
 		}
 		if(!pcrInComponent && PCR_pid!=MPEGConstants.NO_PCR_PID) {// ISO/IEC 13818-1:2013, 2.4.4.9; If no PCR is associated with a program definition for private streams, then this field shall take the value of 0x1FFF.
@@ -799,7 +832,7 @@ public class TransportStream implements TreeNode{
 		// now calculate bitrate of stream by averaging bitrates of PIDS with PCR
 
 		int teller=0;
-		long totBitrate=0l;
+		long totBitrate= 0L;
 		for(final PID pid:pids){
 			if((pid!=null)&&(pid.getBitRate()!=-1)){
 				teller++;
@@ -937,7 +970,7 @@ public class TransportStream implements TreeNode{
 				r = getFormattedDate(now)+ " "+getFormattedTime(now);
 			}
 		}else{ // no bitrate, return packet number
-			r = Long.toString(packetNo)+" (packetNo)";
+			r = packetNo +" (packetNo)";
 		}
 		return r;
 	}
@@ -979,7 +1012,7 @@ public class TransportStream implements TreeNode{
 				r = now.get(Calendar.HOUR_OF_DAY)+"h"+df2pos.format(now.get(Calendar.MINUTE))+"m"+df2pos.format(now.get(Calendar.SECOND))+":"+df3pos.format(now.get(Calendar.MILLISECOND));
 			}
 		}else{ // no bitrate
-			r = Long.toString(packetNo)+" (packetNo)";
+			r = packetNo +" (packetNo)";
 		}
 		return r;
 	}
@@ -1063,8 +1096,7 @@ public class TransportStream implements TreeNode{
 		final NIT nit = getPsi().getNit();
 		final int actualNetworkID = nit.getActualNetworkID();
 		final List<Descriptor> descriptors = nit.getNetworkDescriptors(actualNetworkID);
-		final List<LinkageDescriptor> linkageDescriptors = Descriptor.findGenericDescriptorsInList(descriptors, LinkageDescriptor.class);
-		return linkageDescriptors;
+		return Descriptor.findGenericDescriptorsInList(descriptors, LinkageDescriptor.class);
 	}
 
 	public boolean isONTSection(int pid) {

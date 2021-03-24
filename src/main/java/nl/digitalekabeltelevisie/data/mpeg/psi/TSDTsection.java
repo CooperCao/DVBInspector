@@ -25,39 +25,49 @@
  *
  */
 
-package nl.digitalekabeltelevisie.gui;
+package nl.digitalekabeltelevisie.data.mpeg.psi;
 
-import java.awt.Toolkit;
-import java.awt.datatransfer.Clipboard;
-import java.awt.event.ActionEvent;
+import java.util.List;
 
-import javax.swing.AbstractAction;
+import javax.swing.tree.DefaultMutableTreeNode;
+
+import nl.digitalekabeltelevisie.data.mpeg.PID;
+import nl.digitalekabeltelevisie.data.mpeg.PsiSectionData;
+import nl.digitalekabeltelevisie.data.mpeg.descriptors.Descriptor;
+import nl.digitalekabeltelevisie.data.mpeg.descriptors.DescriptorFactory;
+import nl.digitalekabeltelevisie.util.Utils;
 
 /**
  * @author Eric
  *
  */
-public class TableCopyAction extends AbstractAction {
+public class TSDTsection extends TableSectionExtendedSyntax {
 	
-	final TablePanel tablePanel;
+	private List<Descriptor> descriptorList;
 
 	/**
-	 * @param tablePanel
-	 * @param string
+	 * @param raw_data
+	 * @param parent
 	 */
-	public TableCopyAction(TablePanel tablePanel, String label) {
-		super(label);
-		this.tablePanel = tablePanel;
+	public TSDTsection(PsiSectionData raw_data, PID parent) {
+		super(raw_data, parent);
+		
+		final int descriptorsLength = sectionLength -9;
+		
+		descriptorList = DescriptorFactory.buildDescriptorList(raw_data.getData(),8,descriptorsLength,this);
 	}
 
+	protected String getTableIdExtensionLabel() {
+		return "reserved ";
+	}
+
+	
 	@Override
-	public void actionPerformed(ActionEvent e) {
+	public DefaultMutableTreeNode getJTreeNode(final int modus){
 
-        TextHTMLTransferable transferable = new TextHTMLTransferable(tablePanel.getTableAsText(), tablePanel.getTableAsHtml());
-
-		final Clipboard clipboard = Toolkit.getDefaultToolkit().getSystemClipboard();
-		clipboard.setContents(transferable, null);
-        
+		final DefaultMutableTreeNode t = super.getJTreeNode(modus);
+		Utils.addListJTree(t,descriptorList,modus,"descriptors");
+		return t;
 	}
 
 }
